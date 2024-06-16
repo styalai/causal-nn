@@ -1,3 +1,67 @@
+class SupervCausalLSTMMemory(nn.Module):
+    def __init__(self, inp_size, out_size):
+        super().__init__()
+        self.out_size = out_size
+        
+        self.w = torch.randn(inp_size, out_size)
+        self.causal = torch.zeros(1, inp_size, out_size)
+        
+        self.deep = 1
+        self.outt_1 = torch.zeros(1, out_size)
+        
+        self.lstm = nn.LSTM(out_size, out_size, self.deep)
+        self.init_hid()
+        self.optim = torch.optim.AdamW(self.lstm.parameters(), lr=3e-2)
+        self.loss_lstm = nn.MSELoss()
+        
+    
+    def init_hid(self):
+        self.h = torch.zeros(self.deep, self.out_size)
+        self.c = torch.zeros(self.deep, self.out_size)
+        
+        self.h1 = torch.zeros(self.deep, self.out_size)
+        self.c1 = torch.zeros(self.deep, self.out_size)
+    
+    def loss_fn(self, a, b):
+        loss = a - b
+        return loss
+    
+    def forward(self, sdr, target=None, learning=True, lr=3e-2):
+        
+        ########## FORWARD
+        # sdr : (1, inp_size)
+        
+
+        if learning:
+            out = target # (1, out_size)
+            causality = sdr.T @ out # (inp_size, out_size)
+            self.causal = torch.cat((self.causal, causality.unsqueeze(0)), axis=0)    
+            causal = torch.mean(self.causal, 0)
+            
+            loss = self.loss_fn(causal, self.w)
+            
+            self.w = self.w + (loss * lr)
+            
+        else:
+            out = torch.special.erf(sdr @ self.w) # (1, out_size)
+        
+        ########## PREDICTION
+
+        if learning:
+            pred_1, (self.h1, self.c1) = self.lstm(self.outt_1, (self.h1, self.c1))
+            self.h1, self.c1 = self.h1.detach(), self.c1.detach()
+
+            loss = self.loss_lstm(pred_1, out)
+            self.optim.zero_grad(set_to_none=True)
+            loss.backward()
+            self.optim.step()
+        
+        self.outt_1 = out
+        
+        pred, (self.h, self.c) = self.lstm(out, (self.h, self.c))
+        
+        return out, pred
+
 class CausalLSTMMemory(nn.Module):
     def __init__(self, inp_size, out_size):
         super().__init__()
